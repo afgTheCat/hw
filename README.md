@@ -15,8 +15,10 @@ Both relative and absolute paths were tested.
 ## Design decisions
 
 I wrote a [design journal](docs/design_journal.md) as I was working on the
-problem. It includes the prompts used for AI-assisted development, responses,
-and the reasoning behind implementation decisions and experiments.
+problem. It records the reasoning behind implementation decisions and
+experiments. The [AI transcript](docs/ai_transcript.md) records conversations that
+informed implementation, tests, design decisions, and performance work.
+Tangential discussions and final documentation and transcript editing are omitted.
 
 Design priorities, in decreasing order:
 
@@ -86,7 +88,8 @@ hyperfine --shell=sh --warmup 3 --runs 10 \
     'target/release/payments-engine assets/test_1m_1.csv > /dev/null'
 ```
 
-The generator was also AI-generated, its prompt is included in the journal.
+The generator was also AI-generated; its prompt is included in the
+[AI transcript](docs/ai_transcript.md#benchmark-input-generator).
 
 ## Possible improvements
 

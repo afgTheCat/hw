@@ -17,7 +17,7 @@ This is a single Rust 2024 crate for a CSV payments engine. The CLI contract is
 
 ## Project Constraints
 
-- Preserve the design decisions documented in `logs/iterations.md` unless the
+- Preserve the design decisions documented in `docs/design_journal.md` unless the
   task calls for changing them.
 - Keep amounts exact: integer units of 0.0001, checked balance arithmetic, and
   nonnegative transaction amounts validated at construction.

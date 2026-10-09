@@ -1,3 +1,7 @@
+The project-related conversations, including the full questions and follow-ups,
+are collected in the [AI transcript](ai_transcript.md). This journal retains the
+development notes, design decisions, and benchmark results.
+
 # First commit - Make it work
 
 This commit is entirely hand written, no AI tools are used. I only used docs.rs
@@ -35,58 +39,9 @@ Priority number one is to have something working (passing the test file).
 
 # Second commit - Making it correct, the logic
 
-Using codex (using GPT-6-Astra high) I prompted the following:
-
-> Read the coding challange at ~/Downloads/Rust Coding Challenge.pdf. I started
-> working on an implementation. Check the current solution that I wrote in the
-> main.rs. Check for correctness issues. Do not report on the known issues yet
-> (missing docs, performance and cross platform incompatibiility).
-
-Codex identified the following issues:
-
-> 1. [P1] Valid chargebacks fail parsing — src/main.rs:95 The parser matches
->    "Chargeback", but the input specifies lowercase "chargeback". Any valid
->    chargeback aborts the entire run before processing transactions.
->
-> 2. [P1] Disputes can affect another client’s funds — src/main.rs:164 The
->    dispute branch never verifies that the referenced transaction belongs to
->    the supplied client. With client 1 depositing 10 and client 2 depositing
->    20, dispute,2,1, incorrectly holds 10 from client 2. A subsequent
->    resolve,1,1, panics because it subtracts from client 1’s empty held
->    balance. Validate ownership before modifying balances or recording the
->    dispute.
->
-> 3. [P1] Spending a deposit prevents its dispute — src/main.rs:171 Depositing
->    10, withdrawing 8, then disputing the deposit leaves available=2, held=0.
->    The specified dispute operation requires available=-8, held=10, total=2; it
->    has no sufficient-funds condition. This also prevents the later chargeback.
->    Supporting this requires a balance representation that permits negative
->    available funds.
->
-> 4. [P2] Whole-number amounts are rejected — src/main.rs:57 deposit,1,1,1 fails
->    because parsing requires a decimal point. “Up to four places past the
->    decimal” includes zero fractional places. Treat a missing fractional part
->    as zero.
->
-> 5. [P2] Resolved transactions cannot be disputed again — src/main.rs:160 The
->    existence check rejects every previously disputed transaction, including
->    those marked Resolved. A deposit of 10, followed by dispute → resolve →
->    dispute, ends with available=10, held=0. Resolution makes the transaction
->    no longer disputed; only chargeback is described as final. Check the stored
->    status when deciding whether to accept another dispute.
->
-> 6. [P2] Amount and balance arithmetic can overflow — src/main.rs:70,
->    src/main.rs:148 1844674407370955.1616 panics during parsing. Separately,
->    depositing 1844674407370955.1615 and then 0.0001 panics when updating the
->    balance. These inputs meet the stated decimal precision constraint, which
->    sets no magnitude limit. Use checked arithmetic and return an explicit
->    error for unsupported values.
->
-> 7. [P2] Output failures can be silently reported as success — src/main.rs:238
->    The CSV writer buffers output, but report() returns without explicitly
->    flushing it. Redirecting a small report to /dev/full produces exit status 0
->    with no error. Call writer.flush()? before returning so final write errors
->    propagate.
+I used Codex (GPT-6-Astra high) to review correctness. The prompt and the
+numbered findings are recorded in the
+[AI transcript](ai_transcript.md#correctness-review).
 
 #1, #2 and #7 are simple oversights that I corrected immediately. #3 and #5
 probably stems from not understanding how payment providers usually handle
@@ -110,44 +65,16 @@ disputes and decided to go with the following design based on Stripe.
   [Stripe: Disputes after account closure](https://support.stripe.com/questions/refunds-and-disputes-after-closing-a-stripe-account)
   states that disputes can arise even after an account is closed.
 
-Once I finalized how processor should work, I moved most things into
-`src/lib.rs` so test will be able to use them. Once that was done, I prompted
-codex with the following:
-
-> I ended up with the following design decisions: 1, Allow negative balances for
-> dispute handling. 2, Allow multiple dispute attempts. 3, Only allow dispute
-> resolution for deposits. 4, Disputes should still be handled even when an
-> account has been frozen. The code has been updated. I created a lib.rs that
-> contains exports that are needed for tests/. Could you write and test the
-> correctness of the implementation? Do not write tests for input/output
-> handling just yet.
-
-And what I got back was:
-
-> Both debug and release runs produced 26 passes and 3 failures. Tests covering
-> all four design decisions passed.
->
-> The failures expose arithmetic bugs:
->
-> • Deposit conversion (src/lib.rs:177): depositing i64::MAX + 1 units produces
-> a negative balance. • Withdrawal conversion (src/lib.rs:182): withdrawing
-> u64::MAX units from an empty account credits it with one unit. • Balance
-> accumulation (src/lib.rs:177): depositing i64::MAX, then one additional unit,
-> panics in debug and wraps negative in release.
->
-> These occur directly in transaction processing. I left the failing regression
-> tests active and the processing logic unchanged.
+Once I finalized how the processor should work, I moved most things into
+`src/lib.rs` so tests could use them. I asked Codex to write processor tests;
+the initial run exposed three arithmetic failures. The request and results are
+in the [AI transcript](ai_transcript.md#processor-tests-and-arithmetic-safety).
 
 It is fairly unrealistic to exceed the current i64::{MAX,MIN} boundaries, but
-addressing this is easy with checked_{add,sub,mul} operations, so I followed up
-with the following:
-
-> • Added HwErrors::ArithmeticError. • Replaced unchecked amount arithmetic and
-> casts with checked methods and try_from. • Propagated errors through both
-> processing methods and the CLI. • Ensured arithmetic failures preserve
-> balances and dispute status; batches stop at the first error.
->
-> Updated regression tests: all 32 pass in debug and release builds.
+addressing this is easy with checked_{add,sub,mul} operations, so I asked Codex
+to address them. The
+[implementation summary](ai_transcript.md#processor-tests-and-arithmetic-safety)
+records checked arithmetic, error propagation, and atomic balance updates.
 
 I did a minimal refactor at this point, creating a module for the transaction.
 Reason is two fold:
@@ -169,26 +96,16 @@ The following things I observed:
 - I lazily just wrote to csv to `/dev/stdout`, which is not platform
   independent. Now we are writing to std::io::stdout().
 
-I than asked codex about remaining issues and it wrote:
-
-> • Two previously identified items remain:
->
-> • Empty input still produces no output header — report
-> (src/payment_processor.rs:179). Confirmed with header-only input.
-> .has_headers(true) emits headers only when the first struct is serialized. You
-> already deferred this.
->
-> • Input is still loaded entirely before processing — get_transactions
-> (src/lib.rs:53). This remains the known memory-efficiency concern.
+A follow-up review identified missing output headers for empty input and
+unnecessary input collection. The recorded findings are in the
+[AI transcript](ai_transcript.md#csv-reporting-and-cli-tests).
 
 The solution suggested was to write the headers explicitly before the csv
 processing loop. I integrated it's solution.
 
-I then wrote:
-
-> Implemented your header suggestion. Now that the whole io part is fixed, write
-> tests that test the whole flow, from parsing, processing and outputting.
-> Should be in the tests/ folder, single file.
+I then asked Codex for end-to-end tests covering parsing, processing, and
+output. The request is in the
+[AI transcript](ai_transcript.md#csv-reporting-and-cli-tests).
 
 It added 16 e2e tests. I checked the tests aganist the requirements (and made
 codex check it once again), but found no issues.
@@ -214,29 +131,9 @@ These are:
 ## Getting the baseline
 
 First thing we are going to do is create a test file. To do that, we are going
-to create `src/bin/generate_test_file.rs`. I let codex handle this one:
-
-> Write a test file generating script. Test files should be placed under assets/
-> and have the prefix test_. Gitignore should ignore these files, as they are
-> going to be huge. The script shoud generate 1_000_000 rows for a fixed amount
-> of clients. Generation should roughly be: 1, we will have 100 clients with
-> 1..100 id. 2, generate the transactions before writing. they should be
-> generated with some random probabilities (you can pick something realistic)
-> but they must be overwhelmingly deposits and withrawal. generate Disputes,
-> Resolve and Chargebacks even if they cannot reference realistic transctions,
-> but make sure that Disputes outweigh Reolves and Chargebacks in number. If
-> disputes, resolves and chargeback can reference transcations, (potentially
-> disputed ones), they should do so ovewhelmingly. Once a client is closed,
-> introduce a new one, but make sure that old one will still try to deposit, and
-> withraw. Probablity distribution should be set in a way, that by the end of
-> transaction generations we shuld have roughly 150 clients, 50 blocked the rest
-> active. 3, once the transactions are recorded, write them to the output file.
-> Make sure to log the amount of active clients at the end of generation. Also
-> extending the core types (Transaction, Client, ..) rather than introducing new
-> ones.
-
-The goal here is for me to be able to check the test file generation if need be,
-rather than perf.
+to create `src/bin/generate_test_file.rs`. I let Codex handle this one; the
+[generator request](ai_transcript.md#benchmark-input-generator) records the
+transaction mix, reference rules, client replacement, and output requirements.
 
 At this point I also decided to introduce an AGENTS.md, as I suspected now that
 I have a good understanding of the problem, I will mostly use codex from now on.
@@ -304,19 +201,9 @@ runs) mean ± σ min … max Wall Time [ms] 299.2 ± 4.1 293.0 … 305.5 Memory 
 
 The next improvement I wanted to test out, is using faster data structures.
 Rust's hashmap is famously cryptographically secure, and we don't need it to be.
-So I asked codex for a recommendation:
-
-> I just introduced streaming (fn process_all_transactions). I know that there
-> are faster HashMap implementations out there, that may better suite us
-> (FnvHashmap as an example). Which one do you think would best suite us?
-
-It recommended trying out 3 different hashmaps. So I requested the following:
-
-> The baseline implemenation uses the default Hashmap (hashbrown). Evaluate the
-> 3 recommended hashmap implementations, integrating them in the codebase, and
-> by running hyperfine --shell=sh --warmup 3 --runs 10 \
-> 'target/release/payments-engine assets/test_1m_1.csv > /dev/null'. Present the
-> results afterwards.
+I asked Codex for a recommendation, then asked it to integrate and benchmark the
+three alternatives. Both requests are in the
+[AI transcript](ai_transcript.md#hashmap-comparison-and-integration).
 
 Then I went to store to grab some snacks. The results were:
 
@@ -331,13 +218,12 @@ I then asked codex to integrate FxHashMap.
 
 ## Flamegraph
 
-Next thing I wanted to do is just check the flamegraph:
+Next I checked the flamegraph using samply:
 
-> I would like to use samply (already installed to check). Should analyze the
-> same test file that we worked with. Can you give me the command?
-
-> CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin payments-engine
-> samply record target/release/payments-engine assets/test_1m_1.csv > /dev/null
+```sh
+CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin payments-engine
+samply record target/release/payments-engine assets/test_1m_1.csv > /dev/null
+```
 
 At this point, roughly 70 percent of the time is spent deserializing the csv and
 20 percent is spent on hashmap operations. Before trying to further optimize
@@ -359,13 +245,16 @@ And then:
 cargo clippy --fix --allow-dirty
 ```
 
-I then asked codex to clean up remaining clippy issues.
+I then asked Codex to clean up remaining Clippy issues
+([request](ai_transcript.md#clippy-cleanup)).
 
 Next I simplified the `PaymentProcessor` the following way: instead of having
 the disputes be stored separately, each transaction will have a dispute status.
 Performance decresed slightly due to storing the status next to the Transaction.
 Then I realized that the transaction could fit the status with its padding, so I
-migrated the status to the transaction, increasing perf slightly.
+migrated the status to the transaction, increasing perf slightly. The related
+implementation requests are in the
+[AI transcript](ai_transcript.md#dispute-state-and-account-operations).
 
 ```sh
 hyperfine --shell=sh --warmup 3 --runs 10 \
@@ -378,43 +267,10 @@ Benchmark 1: target/release/payments-engine assets/test_1m_1.csv > /dev/null (10
 
 ```
 
-After this I asked codex to suggest better names:
-
-> The biggest improvement would be distinguishing **accounts**, **incoming
-> transactions**, and **balance operations**. I’d keep `Transaction`,
-> `PaymentProcessor`, and `PaymentError`.
->
-> | Current name                                | Suggested name              | Why                                                           |
-> | ------------------------------------------- | --------------------------- | ------------------------------------------------------------- |
-> | `Client`                                    | `Account`                   | Stores balances and account status, not customer information. |
-> | `clients` / `client(id)`                    | `accounts` / `account(id)`  | Matches the type’s responsibility.                            |
-> | `CsvInputRow`                               | `TransactionCsvRow`         | Identifies what the row represents.                           |
-> | `CsvOutputRow`                              | `AccountCsvRow`             | Identifies what the report contains.                          |
-> | `TransactionType`                           | `TransactionKind`           | Consistent with the existing `kind` field and accessor.       |
-> | `DisputeStatus::Normal`                     | `DisputeStatus::Undisputed` | Makes the state explicit; also applies after resolution.      |
-> | `Transaction::client()`                     | `client_id()`               | Returns an identifier, not a client object.                   |
-> | `Transaction::tx()`                         | `transaction_id()`          | Avoids the abbreviation.                                      |
-> | Free `process_all_transactions(path)`       | `process_csv_file(path)`    | Distinguishes the CSV workflow from processing a collection.  |
-> | Processor’s `process_all_transactions(...)` | `process_transactions(...)` | “All” adds little meaning.                                    |
-> | `report()`                                  | `write_accounts_csv()`      | Makes the output format and side effect explicit.             |
-> | `amount_to_str()`                           | `format_amount()`           | Describes formatting rather than a generic conversion.        |
-> | `transcation.rs`                            | `transaction.rs`            | Fixes the typo.                                               |
->
-> For the account methods, I’d use:
->
-> - `dispute(amount)` → **`hold_funds(amount)`**
-> - `resolve(amount)` → **`release_held_funds(amount)`**
-> - `chargeback(amount)` → **`apply_chargeback(amount)`**
->
-> These names reflect their actual responsibilities: the processor validates
-> transaction eligibility, while the account changes balances and handles
-> freezing.
->
-> Finally, I’d combine `resolvable_amount` and `chargeback_amount` into
-> **`disputed_amount(client_id)`**. Both currently return the deposit amount
-> only when the transaction belongs to that client and has an active dispute.
-> Keep `disputable_amount(client_id)` for starting a dispute—the distinction
-> between _disputable_ and _disputed_ is useful here.
+After this I asked Codex to suggest and implement clearer names for the account,
+transaction, CSV row types, and processing methods. The suggestions and
+implementation request are in the
+[AI transcript](ai_transcript.md#naming-cleanup).
 
 # Seventh commit - writing the README.md
 
