@@ -1,5 +1,3 @@
-use std::env::current_dir;
-
 use payments_engine::{PaymentError::IncorrectAmountOfArgs, process_csv_file};
 
 fn main() -> anyhow::Result<()> {
@@ -11,8 +9,6 @@ fn main() -> anyhow::Result<()> {
             return Err(IncorrectAmountOfArgs(args).into());
         }
     };
-    let mut file_path = current_dir()?;
-    file_path.push(file);
-    process_csv_file(file_path)?;
+    process_csv_file(file)?;
     Ok(())
 }

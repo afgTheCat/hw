@@ -5,11 +5,11 @@ mod transaction;
 use std::path::Path;
 
 use csv::{ReaderBuilder, Trim};
+pub use error::PaymentError;
+pub use payment_processor::PaymentProcessor;
 use serde::{Deserialize, Serialize};
 
 pub use crate::transaction::{Transaction, TransactionKind};
-pub use error::PaymentError;
-pub use payment_processor::PaymentProcessor;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TransactionCsvRow {

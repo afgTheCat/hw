@@ -415,3 +415,7 @@ After this I asked codex to suggest better names:
 > only when the transaction belongs to that client and has an active dispute.
 > Keep `disputable_amount(client_id)` for starting a dispute—the distinction
 > between _disputable_ and _disputed_ is useful here.
+
+# Seventh commit - writing the README.md
+
+Writing the README.md, some minor tweaks.
