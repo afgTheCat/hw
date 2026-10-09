@@ -1,10 +1,12 @@
 [package]
-name = "hw"
+name = "payments-engine"
 version = "0.1.0"
 edition = "2024"
+default-run = "payments-engine"
 
 [dependencies]
 anyhow = "1.0.104"
 csv = "1.4.0"
 serde = {version = "1.0.229", features = ["derive"]} 
 thiserror = "2.0.21"
+rand = "0.9.5"

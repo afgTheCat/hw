@@ -192,3 +192,110 @@ I then wrote:
 
 It added 16 e2e tests. I checked the tests aganist the requirements (and made
 codex check it once again), but found no issues.
+
+# Forth commit - Making it fast #1
+
+At this point we should have a working and correct implementation. Time to make
+it fast.
+
+## Why this is slow
+
+There are a couple of reasons I suspect why the current aproach is not optimal.
+These are:
+
+- Instead of buffering the csv content we could stream it and process it in
+  place
+- HashMap in rust is cryptographic
+- Another approach would be to mmap the csv instead of streaming (lot of the
+  1brc used something like that)
+- we could paralell process it by exploiting the fact that different clients can
+  be processed independent of each other (could be interesting)
+
+## Getting the baseline
+
+First thing we are going to do is create a test file. To do that, we are going
+to create `src/bin/generate_test_file.rs`. I let codex handle this one:
+
+> Write a test file generating script. Test files should be placed under assets/
+> and have the prefix test_. Gitignore should ignore these files, as they are
+> going to be huge. The script shoud generate 1_000_000 rows for a fixed amount
+> of clients. Generation should roughly be: 1, we will have 100 clients with
+> 1..100 id. 2, generate the transactions before writing. they should be
+> generated with some random probabilities (you can pick something realistic)
+> but they must be overwhelmingly deposits and withrawal. generate Disputes,
+> Resolve and Chargebacks even if they cannot reference realistic transctions,
+> but make sure that Disputes outweigh Reolves and Chargebacks in number. If
+> disputes, resolves and chargeback can reference transcations, (potentially
+> disputed ones), they should do so ovewhelmingly. Once a client is closed,
+> introduce a new one, but make sure that old one will still try to deposit, and
+> withraw. Probablity distribution should be set in a way, that by the end of
+> transaction generations we shuld have roughly 150 clients, 50 blocked the rest
+> active. 3, once the transactions are recorded, write them to the output file.
+> Make sure to log the amount of active clients at the end of generation. Also
+> extending the core types (Transaction, Client, ..) rather than introducing new
+> ones.
+
+The goal here is for me to be able to check the test file generation if need be,
+rather than perf.
+
+At this point I also decided to introduce an AGENTS.md, as I suspected now that
+I have a good understanding of the problem, I will mostly use codex from now on.
+
+```sh
+cargo run --release --bin generate_test_file
+   Compiling payments-engine v0.1.0 (/home/gabor/projects/hw)
+    Finished `release` profile [optimized] target(s) in 0.42s
+     Running `target/release/generate_test_file`
+Generated 1000000 rows with seed 1: 100 active, 50 frozen, 150 total clients
+Deposits: 550685, withdrawals: 439354, disputes: 6980, resolves: 2926, chargebacks: 55
+Wrote /home/gabor/projects/hw/assets/test_1m_1.csv
+```
+
+Using hyperfine with some warmup on 10 runs (and piping the output to
+`/dev/null` so it is less annoying).
+
+```
+cargo build --release
+hyperfine --shell=sh --warmup 3 --runs 10 \
+    'target/release/payments-engine assets/test_1m_1.csv > /dev/null'
+
+Benchmark 1: target/release/payments-engine assets/test_1m_1.csv > /dev/null (10 runs)
+                   mean ±     σ    min …   max
+  Wall Time [ms]  330.9 ±   5.3  324.0 … 339.4
+  Memory [MiB]    215.0 ±   0.1  214.8 … 215.3
+```
+
+What a
+[coincidence](https://matklad.github.io/2026/10/05/benchmark-milliseconds.html)
+!
+
+## Improvement: Streaming
+
+An idea I had in mind, that is a potentially a quick win is streaming. The main
+processing loop becomes this (imo it was too beutiful not to dump it here):
+
+```rust
+pub fn process_all_transactions<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
+    let mut payment_processor = PaymentProcessor::default();
+    let mut reader = ReaderBuilder::new().trim(Trim::All).from_path(path)?;
+    for record in reader.deserialize::<CsvInputRow>() {
+        let record = record?;
+        let transaction = Transaction::try_from(record)?;
+        payment_processor.process_transaction(transaction)?;
+    }
+    payment_processor.report()?;
+    Ok(())
+}
+```
+
+As a result of not allocating intermediate `Vec`s, memeory consumption is
+reduced.
+
+```sh
+git:(main) ✗ hyperfine --shell=sh --warmup 3 --runs 10 \
+'target/release/payments-engine assets/test_1m_1.csv > /dev/null'
+
+Benchmark 1: target/release/payments-engine assets/test_1m_1.csv > /dev/null (10
+runs) mean ± σ min … max Wall Time [ms] 299.2 ± 4.1 293.0 … 305.5 Memory [MiB]
+101.6 ± 0.2 101.2 … 101.8
+```

@@ -1,4 +1,4 @@
-use hw::{HwErrors, PaymentProcessor, Transaction};
+use payments_engine::{PaymentError, PaymentProcessor, Transaction};
 
 // All amounts are integer units of 0.0001, matching Transaction's public API.
 fn process(transactions: Vec<Transaction>) -> PaymentProcessor {
@@ -455,7 +455,7 @@ fn largest_signed_amount_can_be_spent_disputed_and_resolved() {
 fn negative_deposit_is_rejected() {
     for amount in [-1, i64::MIN] {
         let result = Transaction::deposit(1, 1, amount);
-        assert!(matches!(result, Err(HwErrors::InvalidAmount { .. })));
+        assert!(matches!(result, Err(PaymentError::InvalidAmount { .. })));
     }
 }
 
@@ -463,7 +463,7 @@ fn negative_deposit_is_rejected() {
 fn negative_withdrawal_is_rejected() {
     for amount in [-1, i64::MIN] {
         let result = Transaction::withdrawal(1, 1, amount);
-        assert!(matches!(result, Err(HwErrors::InvalidAmount { .. })));
+        assert!(matches!(result, Err(PaymentError::InvalidAmount { .. })));
     }
 }
 
@@ -476,7 +476,7 @@ fn balance_overflow_stops_the_batch_and_preserves_prior_transactions() {
         Transaction::deposit(1, 2, 1).unwrap(),
         Transaction::deposit(2, 3, 1).unwrap(),
     ]);
-    assert!(matches!(result, Err(HwErrors::ArithmeticError)));
+    assert!(matches!(result, Err(PaymentError::ArithmeticError)));
     assert_client(&processor, 1, i128::from(amount), 0, false);
     assert!(processor.client(2).is_none());
     processor
@@ -507,7 +507,7 @@ fn dispute_underflow_preserves_balances_and_allows_retry() {
             .process_all_transactions(vec![Transaction::dispute(1, 1)])
             .unwrap();
         let result = processor.process_all_transactions(vec![Transaction::dispute(1, 3)]);
-        assert!(matches!(result, Err(HwErrors::ArithmeticError)));
+        assert!(matches!(result, Err(PaymentError::ArithmeticError)));
         assert_client(&processor, 1, -i128::from(amount), amount, false);
 
         processor
@@ -528,7 +528,7 @@ fn held_overflow_does_not_partially_apply_a_dispute() {
         Transaction::deposit(1, 3, 2).unwrap(),
     ]);
     let result = processor.process_all_transactions(vec![Transaction::dispute(1, 3)]);
-    assert!(matches!(result, Err(HwErrors::ArithmeticError)));
+    assert!(matches!(result, Err(PaymentError::ArithmeticError)));
     assert_client(&processor, 1, 2, 2 * amount, false);
 
     processor
@@ -553,7 +553,7 @@ fn resolve_overflow_preserves_held_funds_and_pending_status() {
         .unwrap();
 
     let result = processor.process_all_transactions(vec![Transaction::resolve(1, 1)]);
-    assert!(matches!(result, Err(HwErrors::ArithmeticError)));
+    assert!(matches!(result, Err(PaymentError::ArithmeticError)));
     assert_client(&processor, 1, i128::from(amount), 100, false);
 
     processor

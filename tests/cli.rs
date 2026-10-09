@@ -18,8 +18,8 @@ impl InputFile {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let directory = loop {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            let directory =
-                std::env::temp_dir().join(format!("hw-cli-{}-{id}", std::process::id()));
+            let directory = std::env::temp_dir()
+                .join(format!("payments-engine-cli-{}-{id}", std::process::id()));
             match fs::create_dir(&directory) {
                 Ok(()) => break directory,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -35,7 +35,7 @@ impl InputFile {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_hw"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_payments-engine"));
         command.current_dir(&self.directory);
         command
     }

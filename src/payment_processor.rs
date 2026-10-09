@@ -1,8 +1,7 @@
+use csv::WriterBuilder;
 use std::collections::HashMap;
 
-use csv::WriterBuilder;
-
-use crate::HwErrors::{self, *};
+use crate::PaymentError::{self, *};
 use crate::{CsvOutputRow, Transaction, TransactionType};
 
 fn amount_to_str(amount: i128) -> String {
@@ -52,7 +51,7 @@ impl PaymentProcessor {
         self.clients.get(&client_id)
     }
 
-    fn process_transaction(&mut self, transaction: Transaction) -> Result<(), HwErrors> {
+    pub fn process_transaction(&mut self, transaction: Transaction) -> Result<(), PaymentError> {
         let client_id = transaction.client();
         let tx = transaction.tx();
         let client = self.clients.entry(client_id).or_insert(Client::default());
@@ -169,7 +168,7 @@ impl PaymentProcessor {
     pub fn process_all_transactions(
         &mut self,
         transactions: Vec<Transaction>,
-    ) -> Result<(), HwErrors> {
+    ) -> Result<(), PaymentError> {
         for trx in transactions {
             self.process_transaction(trx)?;
         }
