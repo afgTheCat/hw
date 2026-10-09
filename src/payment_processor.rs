@@ -1,5 +1,5 @@
 use csv::WriterBuilder;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::PaymentError::{self, *};
 use crate::{CsvOutputRow, Transaction, TransactionType};
@@ -41,9 +41,9 @@ impl Dispute {
 
 #[derive(Default)]
 pub struct PaymentProcessor {
-    clients: HashMap<u16, Client>,
-    processed_transactions: HashMap<u32, Transaction>,
-    disputed_transactions: HashMap<u32, Dispute>,
+    clients: FxHashMap<u16, Client>,
+    processed_transactions: FxHashMap<u32, Transaction>,
+    disputed_transactions: FxHashMap<u32, Dispute>,
 }
 
 impl PaymentProcessor {

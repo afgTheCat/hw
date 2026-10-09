@@ -205,7 +205,7 @@ These are:
 
 - Instead of buffering the csv content we could stream it and process it in
   place
-- HashMap in rust is cryptographic
+- HashMap in rust is cryptographically secure
 - Another approach would be to mmap the csv instead of streaming (lot of the
   1brc used something like that)
 - we could paralell process it by exploiting the fact that different clients can
@@ -299,3 +299,47 @@ Benchmark 1: target/release/payments-engine assets/test_1m_1.csv > /dev/null (10
 runs) mean ± σ min … max Wall Time [ms] 299.2 ± 4.1 293.0 … 305.5 Memory [MiB]
 101.6 ± 0.2 101.2 … 101.8
 ```
+
+# Fifth commit - Making it fast #2
+
+The next improvement I wanted to test out, is using faster data structures.
+Rust's hashmap is famously cryptographically secure, and we don't need it to be.
+So I asked codex for a recommendation:
+
+> I just introduced streaming (fn process_all_transactions). I know that there
+> are faster HashMap implementations out there, that may better suite us
+> (FnvHashmap as an example). Which one do you think would best suite us?
+
+It recommended trying out 3 different hashmaps. So I requested the following:
+
+> The baseline implemenation uses the default Hashmap (hashbrown). Evaluate the
+> 3 recommended hashmap implementations, integrating them in the codebase, and
+> by running hyperfine --shell=sh --warmup 3 --runs 10 \
+> 'target/release/payments-engine assets/test_1m_1.csv > /dev/null'. Present the
+> results afterwards.
+
+Then I went to store to grab some snacks. The results were:
+
+| Map             | Time, mean ± σ | Mean peak memory | Time reduction |
+| --------------- | -------------: | ---------------: | -------------: |
+| Default HashMap | 298.3 ± 2.6 ms |        101.6 MiB |              — |
+| FxHashMap       | 271.0 ± 3.2 ms |        101.6 MiB |           9.2% |
+| AHashMap        | 273.8 ± 2.1 ms |        101.7 MiB |           8.2% |
+| FnvHashMap      | 272.0 ± 3.4 ms |        101.8 MiB |           8.8% |
+
+I then asked codex to integrate FxHashMap.
+
+## Flamegraph
+
+Next thing I wanted to do is just check the flamegraph:
+
+> I would like to use samply (already installed to check). Should analyze the
+> same test file that we worked with. Can you give me the command?
+
+> CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --bin payments-engine
+> samply record target/release/payments-engine assets/test_1m_1.csv > /dev/null
+
+At this point, roughly 70 percent of the time is spent deserializing the csv and
+20 percent is spent on hashmap lookups. Before trying to further optimize this,
+I want to have a round of code cleanup so the code is presentable. I also added
+the perf related things to the gitignore.

@@ -1,2 +1,9 @@
 /target
 /assets/test_*
+
+# Profiling output (perf, cargo-flamegraph, samply)
+/perf.data*
+/flamegraph.svg
+/flamegraph.folded
+/profile.json
+/profile.json.gz
