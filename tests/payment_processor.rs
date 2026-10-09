@@ -455,7 +455,7 @@ fn largest_signed_amount_can_be_spent_disputed_and_resolved() {
 fn negative_deposit_is_rejected() {
     for amount in [-1, i64::MIN] {
         let result = Transaction::deposit(1, 1, amount);
-        assert!(matches!(result, Err(HwErrors::NegativeAmount)));
+        assert!(matches!(result, Err(HwErrors::InvalidAmount { .. })));
     }
 }
 
@@ -463,7 +463,7 @@ fn negative_deposit_is_rejected() {
 fn negative_withdrawal_is_rejected() {
     for amount in [-1, i64::MIN] {
         let result = Transaction::withdrawal(1, 1, amount);
-        assert!(matches!(result, Err(HwErrors::NegativeAmount)));
+        assert!(matches!(result, Err(HwErrors::InvalidAmount { .. })));
     }
 }
 

@@ -1,4 +1,4 @@
-# First commit
+# First commit - Make it work
 
 This commit is entirely hand written, no AI tools are used. I only used docs.rs
 in order to read about the csv crate. The reason for that is just so I can have
@@ -33,9 +33,9 @@ Priority number one is to have something working (passing the test file).
 - Can a tranasction that has been disputed and resolved once be disputed again?
   For simplicity, I will make all transctions be disputable only once?
 
-# Second commit
+# Second commit - Making it correct, the logic
 
-I opened codex (using GPT-6-Astra high) and prompted the following:
+Using codex (using GPT-6-Astra high) I prompted the following:
 
 > Read the coding challange at ~/Downloads/Rust Coding Challenge.pdf. I started
 > working on an implementation. Check the current solution that I wrote in the
@@ -156,3 +156,39 @@ Reason is two fold:
 - now that trx amounts are `i64`, we risk making the illegal stated
   representable. The easiest way to fight this is to just use private fields and
   restrict how Transactions can be constructed.
+
+# Third commit - Making it correct, input/output
+
+The following things I observed:
+
+- We do not have a valid parser, whole numbers (without dots) are ignored
+- Since the total value is only calculated during output, we can overflow there
+  as well (available = i64::Max, held = i64::MAX). This is easily preventable
+  (and probably should be prevented). Instead of book-keeping, I think we could
+  use a larger number at the end (like i128) to write.
+- I lazily just wrote to csv to `/dev/stdout`, which is not platform
+  independent. Now we are writing to std::io::stdout().
+
+I than asked codex about remaining issues and it wrote:
+
+> • Two previously identified items remain:
+>
+> • Empty input still produces no output header — report
+> (src/payment_processor.rs:179). Confirmed with header-only input.
+> .has_headers(true) emits headers only when the first struct is serialized. You
+> already deferred this.
+>
+> • Input is still loaded entirely before processing — get_transactions
+> (src/lib.rs:53). This remains the known memory-efficiency concern.
+
+The solution suggested was to write the headers explicitly before the csv
+processing loop. I integrated it's solution.
+
+I then wrote:
+
+> Implemented your header suggestion. Now that the whole io part is fixed, write
+> tests that test the whole flow, from parsing, processing and outputting.
+> Should be in the tests/ folder, single file.
+
+It added 16 e2e tests. I checked the tests aganist the requirements (and made
+codex check it once again), but found no issues.

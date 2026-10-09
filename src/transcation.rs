@@ -1,33 +1,42 @@
 use crate::{
-    AMOUNT_CAN_NOT_BE_PARSED, CsvInputRow,
+    CsvInputRow,
     HwErrors::{self, *},
 };
 
-fn parse_amount(amount: &str) -> Result<i64, HwErrors> {
-    let Some((amount, bp)) = amount.split_once(".") else {
-        let err = "Amount without '.' separator".into();
-        return Err(TransactionCouldNotBeParsed(err));
-    };
-    if amount.starts_with('-') || bp.starts_with('-') {
-        return Err(NegativeAmount);
+fn parse_transaction_amount(amount: &str) -> Result<i64, HwErrors> {
+    if !amount.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return Err(HwErrors::invalid_amount(
+            amount,
+            "expected decimal digits and an optional decimal point",
+        ));
     }
-    let bp_decimals = bp.len();
-    if bp_decimals > 4 {
-        let err = "Amount with higher precision than bp".into();
-        return Err(TransactionCouldNotBeParsed(err));
+    let (whole, fraction) = amount.split_once('.').unwrap_or((amount, "0"));
+    let fraction_digits = fraction.len();
+    if fraction_digits > 4 {
+        return Err(HwErrors::invalid_amount(
+            amount,
+            "at most four decimal places are allowed",
+        ));
     }
-    let amount = i64::from_str_radix(amount, 10)
-        .map_err(|_err| TransactionCouldNotBeParsed(AMOUNT_CAN_NOT_BE_PARSED.into()))?;
-    let bp = i64::from_str_radix(bp, 10)
-        .map_err(|_err| TransactionCouldNotBeParsed(AMOUNT_CAN_NOT_BE_PARSED.into()))?;
-    let bp_decimals = u32::try_from(bp_decimals).map_err(|_| ArithmeticError)?;
-    let exponent = 4u32.checked_sub(bp_decimals).ok_or(ArithmeticError)?;
-    let scale = 10i64.checked_pow(exponent).ok_or(ArithmeticError)?;
-    let bp = bp.checked_mul(scale).ok_or(ArithmeticError)?;
-    amount
+    let whole: i64 = whole.parse().map_err(|err| {
+        HwErrors::invalid_amount(amount, format!("invalid whole part {whole:?}: {err}"))
+    })?;
+    let fraction: i64 = fraction.parse().map_err(|err| {
+        HwErrors::invalid_amount(
+            amount,
+            format!("invalid fractional part {fraction:?}: {err}"),
+        )
+    })?;
+    let fraction = fraction * 10i64.pow(4 - fraction_digits as u32);
+    whole
         .checked_mul(10_000)
-        .and_then(|whole| whole.checked_add(bp))
-        .ok_or(ArithmeticError)
+        .and_then(|whole| whole.checked_add(fraction))
+        .ok_or_else(|| {
+            HwErrors::invalid_amount(
+                amount,
+                "amount exceeds the supported range at four-decimal precision",
+            )
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +58,10 @@ pub struct Transaction {
 impl Transaction {
     pub fn deposit(client: u16, tx: u32, amount: i64) -> Result<Self, HwErrors> {
         if amount < 0 {
-            return Err(NegativeAmount);
+            return Err(HwErrors::invalid_amount(
+                amount,
+                "amount must be nonnegative",
+            ));
         }
         Ok(Self {
             client,
@@ -60,7 +72,10 @@ impl Transaction {
 
     pub fn withdrawal(client: u16, tx: u32, amount: i64) -> Result<Self, HwErrors> {
         if amount < 0 {
-            return Err(NegativeAmount);
+            return Err(HwErrors::invalid_amount(
+                amount,
+                "amount must be nonnegative",
+            ));
         }
         Ok(Self {
             client,
@@ -120,11 +135,11 @@ impl TryFrom<CsvInputRow> for Transaction {
         let CsvInputRow { client, tx, .. } = value;
         match (value.r#type.as_str(), value.amount) {
             ("deposit", Some(amount)) => {
-                let amount = parse_amount(&amount)?;
+                let amount = parse_transaction_amount(&amount)?;
                 Self::deposit(client, tx, amount)
             }
             ("withdrawal", Some(amount)) => {
-                let amount = parse_amount(&amount)?;
+                let amount = parse_transaction_amount(&amount)?;
                 Self::withdrawal(client, tx, amount)
             }
             ("dispute", None) => Ok(Self::dispute(client, tx)),
