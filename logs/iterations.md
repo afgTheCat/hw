@@ -360,3 +360,58 @@ cargo clippy --fix --allow-dirty
 ```
 
 I then asked codex to clean up remaining clippy issues.
+
+Next I simplified the `PaymentProcessor` the following way: instead of having
+the disputes be stored separately, each transaction will have a dispute status.
+Performance decresed slightly due to storing the status next to the Transaction.
+Then I realized that the transaction could fit the status with its padding, so I
+migrated the status to the transaction, increasing perf slightly.
+
+```sh
+hyperfine --shell=sh --warmup 3 --runs 10 \
+    'target/release/payments-engine assets/test_1m_1.csv > /dev/null'
+
+Benchmark 1: target/release/payments-engine assets/test_1m_1.csv > /dev/null (10 runs)
+                   mean ±     σ    min …   max
+  Wall Time [ms]  261.4 ±   2.1  259.5 … 266.1
+  Memory [MiB]    101.1 ±   0.2  100.8 … 101.3
+
+```
+
+After this I asked codex to suggest better names:
+
+> The biggest improvement would be distinguishing **accounts**, **incoming
+> transactions**, and **balance operations**. I’d keep `Transaction`,
+> `PaymentProcessor`, and `PaymentError`.
+>
+> | Current name                                | Suggested name              | Why                                                           |
+> | ------------------------------------------- | --------------------------- | ------------------------------------------------------------- |
+> | `Client`                                    | `Account`                   | Stores balances and account status, not customer information. |
+> | `clients` / `client(id)`                    | `accounts` / `account(id)`  | Matches the type’s responsibility.                            |
+> | `CsvInputRow`                               | `TransactionCsvRow`         | Identifies what the row represents.                           |
+> | `CsvOutputRow`                              | `AccountCsvRow`             | Identifies what the report contains.                          |
+> | `TransactionType`                           | `TransactionKind`           | Consistent with the existing `kind` field and accessor.       |
+> | `DisputeStatus::Normal`                     | `DisputeStatus::Undisputed` | Makes the state explicit; also applies after resolution.      |
+> | `Transaction::client()`                     | `client_id()`               | Returns an identifier, not a client object.                   |
+> | `Transaction::tx()`                         | `transaction_id()`          | Avoids the abbreviation.                                      |
+> | Free `process_all_transactions(path)`       | `process_csv_file(path)`    | Distinguishes the CSV workflow from processing a collection.  |
+> | Processor’s `process_all_transactions(...)` | `process_transactions(...)` | “All” adds little meaning.                                    |
+> | `report()`                                  | `write_accounts_csv()`      | Makes the output format and side effect explicit.             |
+> | `amount_to_str()`                           | `format_amount()`           | Describes formatting rather than a generic conversion.        |
+> | `transcation.rs`                            | `transaction.rs`            | Fixes the typo.                                               |
+>
+> For the account methods, I’d use:
+>
+> - `dispute(amount)` → **`hold_funds(amount)`**
+> - `resolve(amount)` → **`release_held_funds(amount)`**
+> - `chargeback(amount)` → **`apply_chargeback(amount)`**
+>
+> These names reflect their actual responsibilities: the processor validates
+> transaction eligibility, while the account changes balances and handles
+> freezing.
+>
+> Finally, I’d combine `resolvable_amount` and `chargeback_amount` into
+> **`disputed_amount(client_id)`**. Both currently return the deposit amount
+> only when the transaction belongs to that client and has an active dispute.
+> Keep `disputable_amount(client_id)` for starting a dispute—the distinction
+> between _disputable_ and _disputed_ is useful here.

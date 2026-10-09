@@ -1,6 +1,6 @@
 use crate::{
-    CsvInputRow,
     PaymentError::{self, TransactionCouldNotBeParsed},
+    TransactionCsvRow,
 };
 
 fn parse_transaction_amount(amount: &str) -> Result<i64, PaymentError> {
@@ -40,7 +40,7 @@ fn parse_transaction_amount(amount: &str) -> Result<i64, PaymentError> {
 }
 
 #[derive(Debug, Clone)]
-pub enum TransactionType {
+pub enum TransactionKind {
     Deposit { amount: i64 },
     Withdrawal { amount: i64 },
     Dispute,
@@ -48,18 +48,26 @@ pub enum TransactionType {
     Chargeback,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DisputeStatus {
+    Undisputed,
+    Disputed,
+    ChargedBack,
+}
+
 #[derive(Debug, Clone)]
 pub struct Transaction {
     client: u16,
     tx: u32,
-    kind: TransactionType,
+    kind: TransactionKind,
+    status: DisputeStatus,
 }
 
-impl TryFrom<CsvInputRow> for Transaction {
+impl TryFrom<TransactionCsvRow> for Transaction {
     type Error = PaymentError;
 
-    fn try_from(value: CsvInputRow) -> Result<Self, Self::Error> {
-        let CsvInputRow { client, tx, .. } = value;
+    fn try_from(value: TransactionCsvRow) -> Result<Self, Self::Error> {
+        let TransactionCsvRow { client, tx, .. } = value;
         match (value.r#type.as_str(), value.amount) {
             ("deposit", Some(amount)) => {
                 let amount = parse_transaction_amount(&amount)?;
@@ -80,14 +88,14 @@ impl TryFrom<CsvInputRow> for Transaction {
     }
 }
 
-impl From<&Transaction> for CsvInputRow {
+impl From<&Transaction> for TransactionCsvRow {
     fn from(transaction: &Transaction) -> Self {
         let (kind, amount) = match transaction.kind {
-            TransactionType::Deposit { amount } => ("deposit", Some(amount)),
-            TransactionType::Withdrawal { amount } => ("withdrawal", Some(amount)),
-            TransactionType::Dispute => ("dispute", None),
-            TransactionType::Resolve => ("resolve", None),
-            TransactionType::Chargeback => ("chargeback", None),
+            TransactionKind::Deposit { amount } => ("deposit", Some(amount)),
+            TransactionKind::Withdrawal { amount } => ("withdrawal", Some(amount)),
+            TransactionKind::Dispute => ("dispute", None),
+            TransactionKind::Resolve => ("resolve", None),
+            TransactionKind::Chargeback => ("chargeback", None),
         };
         let amount = amount.map(|amount| format!("{}.{:04}", amount / 10_000, amount % 10_000));
         Self {
@@ -112,7 +120,8 @@ impl Transaction {
         Ok(Self {
             client,
             tx,
-            kind: TransactionType::Deposit { amount },
+            kind: TransactionKind::Deposit { amount },
+            status: DisputeStatus::Undisputed,
         })
     }
 
@@ -128,7 +137,8 @@ impl Transaction {
         Ok(Self {
             client,
             tx,
-            kind: TransactionType::Withdrawal { amount },
+            kind: TransactionKind::Withdrawal { amount },
+            status: DisputeStatus::Undisputed,
         })
     }
 
@@ -137,7 +147,8 @@ impl Transaction {
         Self {
             client,
             tx,
-            kind: TransactionType::Dispute,
+            kind: TransactionKind::Dispute,
+            status: DisputeStatus::Undisputed,
         }
     }
 
@@ -146,7 +157,8 @@ impl Transaction {
         Self {
             client,
             tx,
-            kind: TransactionType::Resolve,
+            kind: TransactionKind::Resolve,
+            status: DisputeStatus::Undisputed,
         }
     }
 
@@ -155,30 +167,51 @@ impl Transaction {
         Self {
             client,
             tx,
-            kind: TransactionType::Chargeback,
+            kind: TransactionKind::Chargeback,
+            status: DisputeStatus::Undisputed,
         }
     }
 
     #[must_use]
     pub fn deposit_amount(&self) -> Option<i64> {
         match self.kind {
-            TransactionType::Deposit { amount } => Some(amount),
+            TransactionKind::Deposit { amount } => Some(amount),
             _ => None,
         }
     }
 
     #[must_use]
-    pub fn client(&self) -> u16 {
+    pub fn client_id(&self) -> u16 {
         self.client
     }
 
     #[must_use]
-    pub fn tx(&self) -> u32 {
+    pub fn transaction_id(&self) -> u32 {
         self.tx
     }
 
     #[must_use]
-    pub fn kind(&self) -> &TransactionType {
+    pub fn kind(&self) -> &TransactionKind {
         &self.kind
+    }
+
+    pub(crate) fn disputable_amount(&self, client_id: u16) -> Option<i64> {
+        if self.client == client_id && self.status == DisputeStatus::Undisputed {
+            self.deposit_amount()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn disputed_amount(&self, client_id: u16) -> Option<i64> {
+        if self.client == client_id && self.status == DisputeStatus::Disputed {
+            self.deposit_amount()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn set_status(&mut self, status: DisputeStatus) {
+        self.status = status;
     }
 }

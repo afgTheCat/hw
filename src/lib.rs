@@ -1,18 +1,18 @@
 mod error;
 mod payment_processor;
-mod transcation;
+mod transaction;
 
 use std::path::Path;
 
 use csv::{ReaderBuilder, Trim};
 use serde::{Deserialize, Serialize};
 
-pub use crate::transcation::{Transaction, TransactionType};
+pub use crate::transaction::{Transaction, TransactionKind};
 pub use error::PaymentError;
 pub use payment_processor::PaymentProcessor;
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct CsvInputRow {
+pub struct TransactionCsvRow {
     r#type: String,
     client: u16,
     tx: u32,
@@ -20,7 +20,7 @@ pub struct CsvInputRow {
 }
 
 #[derive(Debug, Serialize)]
-struct CsvOutputRow {
+struct AccountCsvRow {
     client: u16,
     available: String,
     held: String,
@@ -31,14 +31,14 @@ struct CsvOutputRow {
 /// # Errors
 /// Returns an error if reading or parsing the input, processing a transaction,
 /// or writing the report fails.
-pub fn process_all_transactions<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
+pub fn process_csv_file<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
     let mut payment_processor = PaymentProcessor::default();
     let mut reader = ReaderBuilder::new().trim(Trim::All).from_path(path)?;
-    for record in reader.deserialize::<CsvInputRow>() {
+    for record in reader.deserialize::<TransactionCsvRow>() {
         let record = record?;
         let transaction = Transaction::try_from(record)?;
         payment_processor.process_transaction(transaction)?;
     }
-    payment_processor.report()?;
+    payment_processor.write_accounts_csv()?;
     Ok(())
 }

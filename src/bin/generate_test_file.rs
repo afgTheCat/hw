@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::ensure;
-use payments_engine::{CsvInputRow, PaymentProcessor, Transaction, TransactionType};
+use payments_engine::{PaymentProcessor, Transaction, TransactionCsvRow, TransactionKind};
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::IteratorRandom};
 
 const ROWS: usize = 1_000_000;
@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
             0..550_000 => {
                 let transaction =
                     Transaction::deposit(client, tx, rng.random_range(1..=5_000_000))?;
-                if !processor.client(client).unwrap().locked {
+                if !processor.account(client).unwrap().locked {
                     deposits.push((client, tx));
                 }
                 transaction
@@ -96,7 +96,7 @@ fn main() -> anyhow::Result<()> {
                     pending
                         .iter()
                         .enumerate()
-                        .filter(|(_, (client, _))| !processor.client(*client).unwrap().locked)
+                        .filter(|(_, (client, _))| !processor.account(*client).unwrap().locked)
                         .map(|(index, _)| index)
                         .choose(&mut rng)
                 } else {
@@ -113,10 +113,10 @@ fn main() -> anyhow::Result<()> {
             _ => Transaction::withdrawal(client, tx, 10_000)?,
         };
 
-        let client = transaction.client();
-        let was_locked = processor.client(client).unwrap().locked;
+        let client = transaction.client_id();
+        let was_locked = processor.account(client).unwrap().locked;
         record(&mut processor, &mut transactions, transaction)?;
-        if !was_locked && processor.client(client).unwrap().locked {
+        if !was_locked && processor.account(client).unwrap().locked {
             frozen.push(client);
             last_client = last_client
                 .checked_add(1)
@@ -148,17 +148,17 @@ fn main() -> anyhow::Result<()> {
     }
 
     let active_count = (1..=last_client)
-        .filter(|id| !processor.client(*id).unwrap().locked)
+        .filter(|id| !processor.account(*id).unwrap().locked)
         .count();
     let counts = transactions
         .iter()
         .fold([0usize; 5], |mut counts, transaction| {
             let index = match transaction.kind() {
-                TransactionType::Deposit { .. } => 0,
-                TransactionType::Withdrawal { .. } => 1,
-                TransactionType::Dispute => 2,
-                TransactionType::Resolve => 3,
-                TransactionType::Chargeback => 4,
+                TransactionKind::Deposit { .. } => 0,
+                TransactionKind::Withdrawal { .. } => 1,
+                TransactionKind::Dispute => 2,
+                TransactionKind::Resolve => 3,
+                TransactionKind::Chargeback => 4,
             };
             counts[index] += 1;
             counts
@@ -178,7 +178,7 @@ fn main() -> anyhow::Result<()> {
     let path = assets.join(format!("test_1m_{seed}.csv"));
     let mut writer = csv::Writer::from_path(&path)?;
     for transaction in &transactions {
-        writer.serialize(CsvInputRow::from(transaction))?;
+        writer.serialize(TransactionCsvRow::from(transaction))?;
     }
     writer.flush()?;
     eprintln!("Wrote {}", path.display());

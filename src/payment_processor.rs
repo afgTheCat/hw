@@ -2,9 +2,10 @@ use csv::WriterBuilder;
 use rustc_hash::FxHashMap;
 
 use crate::PaymentError::{self, ArithmeticError};
-use crate::{CsvOutputRow, Transaction, TransactionType};
+use crate::transaction::DisputeStatus;
+use crate::{AccountCsvRow, Transaction, TransactionKind};
 
-fn amount_to_str(amount: i128) -> String {
+fn format_amount(amount: i128) -> String {
     let sign = if amount < 0 { "-" } else { "" };
     let amount = amount.unsigned_abs();
     let bp = amount % 10_000;
@@ -13,165 +14,113 @@ fn amount_to_str(amount: i128) -> String {
 }
 
 #[derive(Default)]
-pub struct Client {
+pub struct Account {
     pub available: i64,
     pub held: i64,
     pub locked: bool,
 }
 
-enum DisputeStatus {
-    Pending,
-    Resolved,
-    Chargedback,
-}
-
-struct Dispute {
-    transaction: Transaction,
-    status: DisputeStatus,
-}
-
-impl Dispute {
-    fn new(transaction: Transaction) -> Self {
-        Self {
-            transaction,
-            status: DisputeStatus::Pending,
+impl Account {
+    fn deposit(&mut self, amount: i64) -> Result<bool, PaymentError> {
+        if self.locked {
+            Ok(false)
+        } else {
+            self.available = self.available.checked_add(amount).ok_or(ArithmeticError)?;
+            Ok(true)
         }
+    }
+
+    fn withdraw(&mut self, amount: i64) -> Result<bool, PaymentError> {
+        if !self.locked && self.available >= amount {
+            self.available = self.available.checked_sub(amount).ok_or(ArithmeticError)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn hold_funds(&mut self, amount: i64) -> Result<(), PaymentError> {
+        let available = self.available.checked_sub(amount).ok_or(ArithmeticError)?;
+        let held = self.held.checked_add(amount).ok_or(ArithmeticError)?;
+        self.available = available;
+        self.held = held;
+        Ok(())
+    }
+
+    fn release_held_funds(&mut self, amount: i64) -> Result<(), PaymentError> {
+        let held = self.held.checked_sub(amount).ok_or(ArithmeticError)?;
+        let available = self.available.checked_add(amount).ok_or(ArithmeticError)?;
+        self.held = held;
+        self.available = available;
+        Ok(())
+    }
+
+    fn apply_chargeback(&mut self, amount: i64) -> Result<(), PaymentError> {
+        self.held = self.held.checked_sub(amount).ok_or(ArithmeticError)?;
+        self.locked = true;
+        Ok(())
     }
 }
 
 #[derive(Default)]
 pub struct PaymentProcessor {
-    clients: FxHashMap<u16, Client>,
+    accounts: FxHashMap<u16, Account>,
     processed_transactions: FxHashMap<u32, Transaction>,
-    disputed_transactions: FxHashMap<u32, Dispute>,
 }
 
 impl PaymentProcessor {
     #[must_use]
-    pub fn client(&self, client_id: u16) -> Option<&Client> {
-        self.clients.get(&client_id)
+    pub fn account(&self, client_id: u16) -> Option<&Account> {
+        self.accounts.get(&client_id)
     }
 
     /// # Errors
     /// Returns `PaymentError::ArithmeticError` if a balance update overflows.
     /// The failed transaction's balance updates are not applied.
-    ///
-    /// # Panics
-    /// Panics if an internal dispute references a non-deposit transaction.
-    /// Disputes are only created for deposits, so valid state prevents this.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Keep the five transaction cases together in a single dispatch"
-    )]
     pub fn process_transaction(&mut self, transaction: Transaction) -> Result<(), PaymentError> {
-        let client_id = transaction.client();
-        let tx = transaction.tx();
-        let client = self.clients.entry(client_id).or_default();
+        let client_id = transaction.client_id();
+        let tx = transaction.transaction_id();
+        let account = self.accounts.entry(client_id).or_default();
         match transaction.kind() {
-            TransactionType::Deposit { amount } => {
-                if !client.locked {
-                    client.available = client
-                        .available
-                        .checked_add(*amount)
-                        .ok_or(ArithmeticError)?;
+            TransactionKind::Deposit { amount } => {
+                if account.deposit(*amount)? {
                     self.processed_transactions.insert(tx, transaction);
                 }
             }
-            TransactionType::Withdrawal { amount } => {
-                if client.locked {
-                    return Ok(());
-                }
-                if client.available >= *amount {
-                    client.available = client
-                        .available
-                        .checked_sub(*amount)
-                        .ok_or(ArithmeticError)?;
+            TransactionKind::Withdrawal { amount } => {
+                if account.withdraw(*amount)? {
                     self.processed_transactions.insert(tx, transaction);
                 }
             }
-            TransactionType::Dispute => {
-                // transaction does not exists
-                let Some(disputed_transaction) = self.processed_transactions.get(&tx) else {
+            TransactionKind::Dispute => {
+                let Some(transaction) = self.processed_transactions.get_mut(&tx) else {
                     return Ok(());
                 };
-                if disputed_transaction.client() != client_id {
-                    return Ok(());
-                }
-                // the transaction in question was not a deposit
-                let Some(deposit_amount) = disputed_transaction.deposit_amount() else {
+                let Some(amount) = transaction.disputable_amount(client_id) else {
                     return Ok(());
                 };
-                // transaction is already disputed
-                match self.disputed_transactions.get_mut(&tx) {
-                    Some(Dispute { status, .. }) if matches!(status, DisputeStatus::Resolved) => {
-                        let available = client
-                            .available
-                            .checked_sub(deposit_amount)
-                            .ok_or(ArithmeticError)?;
-                        let held = client
-                            .held
-                            .checked_add(deposit_amount)
-                            .ok_or(ArithmeticError)?;
-                        client.available = available;
-                        client.held = held;
-                        *status = DisputeStatus::Pending;
-                    }
-                    None => {
-                        let available = client
-                            .available
-                            .checked_sub(deposit_amount)
-                            .ok_or(ArithmeticError)?;
-                        let held = client
-                            .held
-                            .checked_add(deposit_amount)
-                            .ok_or(ArithmeticError)?;
-                        client.available = available;
-                        client.held = held;
-                        let dispute = Dispute::new(disputed_transaction.clone());
-                        self.disputed_transactions.insert(tx, dispute);
-                    }
-                    _ => {}
-                }
+                account.hold_funds(amount)?;
+                transaction.set_status(DisputeStatus::Disputed);
             }
-            TransactionType::Resolve => {
-                let Some(Dispute {
-                    transaction,
-                    status,
-                }) = self.disputed_transactions.get_mut(&tx)
-                else {
+            TransactionKind::Resolve => {
+                let Some(transaction) = self.processed_transactions.get_mut(&tx) else {
                     return Ok(());
                 };
-                if let DisputeStatus::Pending = status
-                    && transaction.client() == client_id
-                {
-                    // we now that this is a deposit
-                    let amount = transaction.deposit_amount().unwrap();
-                    let held = client.held.checked_sub(amount).ok_or(ArithmeticError)?;
-                    let available = client
-                        .available
-                        .checked_add(amount)
-                        .ok_or(ArithmeticError)?;
-                    client.held = held;
-                    client.available = available;
-                    *status = DisputeStatus::Resolved;
-                }
+                let Some(amount) = transaction.disputed_amount(client_id) else {
+                    return Ok(());
+                };
+                account.release_held_funds(amount)?;
+                transaction.set_status(DisputeStatus::Undisputed);
             }
-            TransactionType::Chargeback => {
-                let Some(Dispute {
-                    transaction,
-                    status,
-                }) = self.disputed_transactions.get_mut(&tx)
-                else {
+            TransactionKind::Chargeback => {
+                let Some(transaction) = self.processed_transactions.get_mut(&tx) else {
                     return Ok(());
                 };
-                if let DisputeStatus::Pending = status
-                    && transaction.client() == client_id
-                {
-                    let amount = transaction.deposit_amount().unwrap();
-                    client.held = client.held.checked_sub(amount).ok_or(ArithmeticError)?;
-                    client.locked = true;
-                    *status = DisputeStatus::Chargedback;
-                }
+                let Some(amount) = transaction.disputed_amount(client_id) else {
+                    return Ok(());
+                };
+                account.apply_chargeback(amount)?;
+                transaction.set_status(DisputeStatus::ChargedBack);
             }
         }
         Ok(())
@@ -179,7 +128,7 @@ impl PaymentProcessor {
 
     /// # Errors
     /// Returns the first processing error; earlier transactions remain applied.
-    pub fn process_all_transactions(
+    pub fn process_transactions(
         &mut self,
         transactions: Vec<Transaction>,
     ) -> Result<(), PaymentError> {
@@ -191,23 +140,22 @@ impl PaymentProcessor {
 
     /// # Errors
     /// Returns an error if CSV serialization or writing to stdout fails.
-    pub fn report(&self) -> anyhow::Result<()> {
+    pub fn write_accounts_csv(&self) -> anyhow::Result<()> {
         let stdout = std::io::stdout();
         let mut writer = WriterBuilder::new()
             .has_headers(false)
             .from_writer(stdout.lock());
-        // solution based on codex.
         writer.write_record(["client", "available", "held", "total", "locked"])?;
-        for (id, client) in &self.clients {
-            let available = i128::from(client.available);
-            let held = i128::from(client.held);
+        for (id, account) in &self.accounts {
+            let available = i128::from(account.available);
+            let held = i128::from(account.held);
             let total = available + held;
-            let output = CsvOutputRow {
+            let output = AccountCsvRow {
                 client: *id,
-                available: amount_to_str(available),
-                held: amount_to_str(held),
-                total: amount_to_str(total),
-                locked: client.locked,
+                available: format_amount(available),
+                held: format_amount(held),
+                total: format_amount(total),
+                locked: account.locked,
             };
             writer.serialize(output)?;
         }

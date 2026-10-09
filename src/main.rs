@@ -1,6 +1,6 @@
 use std::env::current_dir;
 
-use payments_engine::{PaymentError::IncorrectAmountOfArgs, process_all_transactions};
+use payments_engine::{PaymentError::IncorrectAmountOfArgs, process_csv_file};
 
 fn main() -> anyhow::Result<()> {
     let input: Vec<_> = std::env::args().collect();
@@ -13,6 +13,6 @@ fn main() -> anyhow::Result<()> {
     };
     let mut file_path = current_dir()?;
     file_path.push(file);
-    process_all_transactions(file_path)?;
+    process_csv_file(file_path)?;
     Ok(())
 }
