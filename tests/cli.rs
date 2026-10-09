@@ -22,7 +22,7 @@ impl InputFile {
                 .join(format!("payments-engine-cli-{}-{id}", std::process::id()));
             match fs::create_dir(&directory) {
                 Ok(()) => break directory,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("could not create test directory: {error}"),
             }
         };
@@ -295,7 +295,7 @@ fn absolute_input_path_and_redirected_output_work() {
         .stdout(Stdio::from(fs::File::create(&report_path).unwrap()))
         .output()
         .unwrap();
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, [] as [u8; 0]);
     output.stdout = fs::read(report_path).unwrap();
     assert_report(output, &["1,2.5000,0.0000,2.5000,false"]);
 }

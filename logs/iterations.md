@@ -340,6 +340,23 @@ Next thing I wanted to do is just check the flamegraph:
 > samply record target/release/payments-engine assets/test_1m_1.csv > /dev/null
 
 At this point, roughly 70 percent of the time is spent deserializing the csv and
-20 percent is spent on hashmap lookups. Before trying to further optimize this,
-I want to have a round of code cleanup so the code is presentable. I also added
-the perf related things to the gitignore.
+20 percent is spent on hashmap operations. Before trying to further optimize
+this, I want to have a round of code cleanup so the code is presentable. I also
+added the perf related things to the gitignore.
+
+# Sixth commit - Code improvements
+
+Next I wanted to use `cargo clippy` with padentic so added this to `Cargo.toml`.
+
+```toml
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+```
+
+And then:
+
+```sh
+cargo clippy --fix --allow-dirty
+```
+
+I then asked codex to clean up remaining clippy issues.

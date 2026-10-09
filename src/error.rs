@@ -14,6 +14,10 @@ pub enum PaymentError {
 }
 
 impl PaymentError {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Accept both numeric amounts and strings without requiring callers to borrow them"
+    )]
     pub fn invalid_amount(amount: impl ToString, reason: impl Into<String>) -> Self {
         Self::InvalidAmount {
             amount: amount.to_string(),

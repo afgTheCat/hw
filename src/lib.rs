@@ -28,6 +28,9 @@ struct CsvOutputRow {
     locked: bool,
 }
 
+/// # Errors
+/// Returns an error if reading or parsing the input, processing a transaction,
+/// or writing the report fails.
 pub fn process_all_transactions<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
     let mut payment_processor = PaymentProcessor::default();
     let mut reader = ReaderBuilder::new().trim(Trim::All).from_path(path)?;

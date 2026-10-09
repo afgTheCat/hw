@@ -1,6 +1,6 @@
 use crate::{
     CsvInputRow,
-    PaymentError::{self, *},
+    PaymentError::{self, TransactionCouldNotBeParsed},
 };
 
 fn parse_transaction_amount(amount: &str) -> Result<i64, PaymentError> {
@@ -27,7 +27,7 @@ fn parse_transaction_amount(amount: &str) -> Result<i64, PaymentError> {
             format!("invalid fractional part {fraction:?}: {err}"),
         )
     })?;
-    let fraction = fraction * 10i64.pow(4 - fraction_digits as u32);
+    let fraction = fraction * [10_000, 1_000, 100, 10, 1][fraction_digits];
     whole
         .checked_mul(10_000)
         .and_then(|whole| whole.checked_add(fraction))
@@ -73,10 +73,7 @@ impl TryFrom<CsvInputRow> for Transaction {
             ("resolve", None) => Ok(Self::resolve(client, tx)),
             ("chargeback", None) => Ok(Self::chargeback(client, tx)),
             (r#type, value) => {
-                let error = format!(
-                    "Unrecognized transaction type: {} with amount: {value:?}",
-                    r#type
-                );
+                let error = format!("Unrecognized transaction type: {type} with amount: {value:?}");
                 Err(TransactionCouldNotBeParsed(error))
             }
         }
@@ -103,6 +100,8 @@ impl From<&Transaction> for CsvInputRow {
 }
 
 impl Transaction {
+    /// # Errors
+    /// Returns `PaymentError::InvalidAmount` if the amount is negative.
     pub fn deposit(client: u16, tx: u32, amount: i64) -> Result<Self, PaymentError> {
         if amount < 0 {
             return Err(PaymentError::invalid_amount(
@@ -117,6 +116,8 @@ impl Transaction {
         })
     }
 
+    /// # Errors
+    /// Returns `PaymentError::InvalidAmount` if the amount is negative.
     pub fn withdrawal(client: u16, tx: u32, amount: i64) -> Result<Self, PaymentError> {
         if amount < 0 {
             return Err(PaymentError::invalid_amount(
@@ -131,6 +132,7 @@ impl Transaction {
         })
     }
 
+    #[must_use]
     pub fn dispute(client: u16, tx: u32) -> Self {
         Self {
             client,
@@ -139,6 +141,7 @@ impl Transaction {
         }
     }
 
+    #[must_use]
     pub fn resolve(client: u16, tx: u32) -> Self {
         Self {
             client,
@@ -147,6 +150,7 @@ impl Transaction {
         }
     }
 
+    #[must_use]
     pub fn chargeback(client: u16, tx: u32) -> Self {
         Self {
             client,
@@ -155,6 +159,7 @@ impl Transaction {
         }
     }
 
+    #[must_use]
     pub fn deposit_amount(&self) -> Option<i64> {
         match self.kind {
             TransactionType::Deposit { amount } => Some(amount),
@@ -162,14 +167,17 @@ impl Transaction {
         }
     }
 
+    #[must_use]
     pub fn client(&self) -> u16 {
         self.client
     }
 
+    #[must_use]
     pub fn tx(&self) -> u32 {
         self.tx
     }
 
+    #[must_use]
     pub fn kind(&self) -> &TransactionType {
         &self.kind
     }

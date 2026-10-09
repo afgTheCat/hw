@@ -1,7 +1,7 @@
 use csv::WriterBuilder;
 use rustc_hash::FxHashMap;
 
-use crate::PaymentError::{self, *};
+use crate::PaymentError::{self, ArithmeticError};
 use crate::{CsvOutputRow, Transaction, TransactionType};
 
 fn amount_to_str(amount: i128) -> String {
@@ -47,14 +47,26 @@ pub struct PaymentProcessor {
 }
 
 impl PaymentProcessor {
+    #[must_use]
     pub fn client(&self, client_id: u16) -> Option<&Client> {
         self.clients.get(&client_id)
     }
 
+    /// # Errors
+    /// Returns `PaymentError::ArithmeticError` if a balance update overflows.
+    /// The failed transaction's balance updates are not applied.
+    ///
+    /// # Panics
+    /// Panics if an internal dispute references a non-deposit transaction.
+    /// Disputes are only created for deposits, so valid state prevents this.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep the five transaction cases together in a single dispatch"
+    )]
     pub fn process_transaction(&mut self, transaction: Transaction) -> Result<(), PaymentError> {
         let client_id = transaction.client();
         let tx = transaction.tx();
-        let client = self.clients.entry(client_id).or_insert(Client::default());
+        let client = self.clients.entry(client_id).or_default();
         match transaction.kind() {
             TransactionType::Deposit { amount } => {
                 if !client.locked {
@@ -165,6 +177,8 @@ impl PaymentProcessor {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns the first processing error; earlier transactions remain applied.
     pub fn process_all_transactions(
         &mut self,
         transactions: Vec<Transaction>,
@@ -175,6 +189,8 @@ impl PaymentProcessor {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns an error if CSV serialization or writing to stdout fails.
     pub fn report(&self) -> anyhow::Result<()> {
         let stdout = std::io::stdout();
         let mut writer = WriterBuilder::new()

@@ -19,6 +19,10 @@ fn record(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep the benchmark generator's sequential workflow and shared state together"
+)]
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let seed = args
